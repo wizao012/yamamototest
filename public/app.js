@@ -19,11 +19,11 @@ const state = {
 /* ── 計測パラメータ ──────────────────────────────
    テスト中は短めに。数字が安定しないようなら DOWN_MS を伸ばす。 */
 const CFG = {
-  DOWN_MS: 9000,
+  DOWN_MS: 8000,
   DOWN_STREAMS: 6,
   DOWN_WARMUP: 1800,   // TCP の立ち上がりを除外する時間
   DOWN_CHUNK: 25 * 1024 * 1024,
-  UP_MS: 7000,
+  UP_MS: 6000,
   UP_STREAMS: 4,
   UP_CHUNK: 4 * 1024 * 1024,
   PING_N: 14,
@@ -132,9 +132,15 @@ async function measureDownload(onTick) {
    ============================================================ */
 
 async function measureUpload(onTick) {
-  const payload = new Blob([crypto.getRandomValues(new Uint8Array(CFG.UP_CHUNK))]);
+  // crypto.getRandomValues は一度に 64KB までしか生成できないため、
+  // 64KB のブロックを作って必要な数だけ並べる
+  const block = crypto.getRandomValues(new Uint8Array(65536));
+  const count = Math.max(1, Math.round(CFG.UP_CHUNK / 65536));
+  const payload = new Blob(new Array(count).fill(block));
+
   let bytes = 0;
   let stop = false;
+  const live = new Set();
   const t0 = performance.now();
 
   const timer = setInterval(() => {
@@ -147,6 +153,7 @@ async function measureUpload(onTick) {
       const next = () => {
         if (stop) return resolve();
         const xhr = new XMLHttpRequest();
+        live.add(xhr);
         let last = 0;
         xhr.open('POST', '/api/up?r=' + Math.random());
         // fetch には送信側の進捗が無いので、上りだけ XHR を使う
@@ -154,16 +161,25 @@ async function measureUpload(onTick) {
           bytes += e.loaded - last;
           last = e.loaded;
         };
-        xhr.onloadend = () => (stop ? resolve() : next());
-        xhr.onerror = () => resolve();
+        xhr.onloadend = () => {
+          live.delete(xhr);
+          if (stop) resolve();
+          else next();
+        };
         xhr.send(payload);
       };
       next();
     });
 
-  const all = Array.from({ length: CFG.UP_STREAMS }, runner);
+  const all = Array.from({ length: CFG.UP_STREAMS }, () => runner());
   await sleep(CFG.UP_MS);
+
+  // 時間が来たら送信中のものを中断する。
+  // これが無いと、上りが細い回線で最後の1本が終わるまで永遠に待つことになる
   stop = true;
+  live.forEach((x) => {
+    try { x.abort(); } catch {}
+  });
   clearInterval(timer);
   await Promise.allSettled(all);
 
@@ -186,26 +202,42 @@ async function runMeasurement() {
 
   await loadMeta();
 
-  $('stage').textContent = '応答時間を測定中';
-  const { ping, jitter } = await measurePing();
-  state.ping = ping;
-  state.jitter = jitter;
-  setNum('ping', ping, 0);
-  setNum('jitter', jitter, 1);
+  // どれか1つが失敗しても、残りの結果で先へ進める。
+  // 計測が止まったまま画面が固まるのが一番まずいので、各段階を個別に囲う。
 
-  $('stage').textContent = '下り速度を測定中';
-  state.down = await measureDownload((v, p) => {
-    setNum('down', v);
-    $('bar').style.width = (p * 55).toFixed(1) + '%';
-  });
-  setNum('down', state.down);
+  try {
+    $('stage').textContent = '応答時間を測定中';
+    const { ping, jitter } = await measurePing();
+    state.ping = ping;
+    state.jitter = jitter;
+    setNum('ping', ping, 0);
+    setNum('jitter', jitter, 1);
+  } catch (e) {
+    console.error('ping failed', e);
+  }
 
-  $('stage').textContent = '上り速度を測定中';
-  state.up = await measureUpload((v, p) => {
-    setNum('up', v);
-    $('bar').style.width = (55 + p * 45).toFixed(1) + '%';
-  });
-  setNum('up', state.up);
+  try {
+    $('stage').textContent = '下り速度を測定中';
+    state.down = await measureDownload((v, p) => {
+      setNum('down', v);
+      $('bar').style.width = (p * 55).toFixed(1) + '%';
+    });
+    setNum('down', state.down);
+  } catch (e) {
+    console.error('download failed', e);
+  }
+
+  try {
+    $('stage').textContent = '上り速度を測定中';
+    state.up = await measureUpload((v, p) => {
+      setNum('up', v);
+      $('bar').style.width = (55 + p * 45).toFixed(1) + '%';
+    });
+    setNum('up', state.up);
+  } catch (e) {
+    console.error('upload failed', e);
+    $('up').textContent = '—';
+  }
 
   $('bar').style.width = '100%';
   $('stage').textContent = '測定完了';
