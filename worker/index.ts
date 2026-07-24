@@ -13,9 +13,16 @@ interface Env {
   DB?: D1Database;
 }
 
-// 64KB の乱数ブロックを起動時に一度だけ生成して使い回す。
-// リクエストごとに生成すると CPU 時間を無駄に食うので、ここは必ずモジュールスコープに置く。
-const CHUNK = crypto.getRandomValues(new Uint8Array(65536));
+// 64KB の乱数ブロック。
+// Workers はグローバルスコープでの乱数生成を禁じているため、ここでは変数を用意するだけにして
+// 最初のリクエストが来たときに一度だけ生成する。以後は同じものを使い回すので、
+// リクエストごとに乱数を作り直す無駄は発生しない。
+let CHUNK: Uint8Array | null = null;
+
+function chunk(): Uint8Array {
+  if (!CHUNK) CHUNK = crypto.getRandomValues(new Uint8Array(65536));
+  return CHUNK;
+}
 
 const MAX_DOWN_BYTES = 100 * 1024 * 1024; // 濫用対策の上限
 const DEFAULT_DOWN_BYTES = 25 * 1024 * 1024;
@@ -131,6 +138,7 @@ function handleDown(url: URL): Response {
       ? Math.min(requested, MAX_DOWN_BYTES)
       : DEFAULT_DOWN_BYTES;
 
+  const buf = chunk();
   let sent = 0;
   const stream = new ReadableStream({
     pull(controller) {
@@ -138,8 +146,8 @@ function handleDown(url: URL): Response {
         controller.close();
         return;
       }
-      const n = Math.min(CHUNK.length, total - sent);
-      controller.enqueue(n === CHUNK.length ? CHUNK : CHUNK.subarray(0, n));
+      const n = Math.min(buf.length, total - sent);
+      controller.enqueue(n === buf.length ? buf : buf.subarray(0, n));
       sent += n;
     },
   });
