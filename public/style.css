@@ -649,3 +649,80 @@ body {
   font-size: 12.5px;
   color: var(--navy);
 }
+
+/* ============================================================
+   用途別の判定表
+   ============================================================ */
+
+.judge { margin: 18px 0 0; }
+
+.judge__lead {
+  margin: 0 0 14px;
+  padding: 13px 14px;
+  border-radius: 12px;
+  background: var(--sky);
+  font-family: var(--round);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--navy);
+  text-align: center;
+}
+.judge__lead em { font-style: normal; color: var(--coral); }
+
+.judge__grid { display: grid; gap: 10px; }
+
+.judge__group {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.judge__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+  background: var(--navy);
+  color: #fff;
+  font-family: var(--round);
+  font-weight: 700;
+  font-size: 13.5px;
+}
+.judge__head svg { flex: 0 0 16px; }
+
+.judge__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 13px;
+  border-top: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.judge__group .judge__row:first-of-type { border-top: 0; }
+
+.judge__name { color: #3c4650; }
+
+.judge__pill {
+  flex: 0 0 auto;
+  min-width: 74px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  text-align: center;
+  font-family: var(--round);
+  font-weight: 700;
+  font-size: 12.5px;
+  color: #fff;
+}
+.judge__pill--3 { background: #17a06e; }
+.judge__pill--2 { background: #e0a021; }
+.judge__pill--1 { background: var(--coral); }
+
+.judge__note {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.75;
+  color: var(--gray);
+}
