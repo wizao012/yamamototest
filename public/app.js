@@ -316,6 +316,7 @@ async function runMeasure(after) {
     '<div><dt>応答</dt><dd id="mping">—<span>ms</span></dd></div>' +
     '<div><dt>ゆらぎ</dt><dd id="mjit">—<span>ms</span></dd></div>' +
     '</dl><p class="meter__wire" id="mwire"></p></div>' +
+    '<div id="mjudge"></div>' +
     '<div id="mdone" hidden><button type="button" class="btn" id="mnext">結果をもとに続ける</button></div>' +
     '</section>'
   );
@@ -337,6 +338,7 @@ async function runMeasure(after) {
     },
   });
 
+  $('mjudge').innerHTML = window.Judge.html(state.speed);
   $('mdone').hidden = false;
   $('mnext').addEventListener('click', function () {
     if (typeof after === 'function') return after();
@@ -437,6 +439,7 @@ function renderResult() {
     '<section class="card">' +
     '<span class="verdict verdict--' + f.tone + '">' + f.verdict + '</span>' +
     '<p class="finding">' + f.text + '</p>' +
+    (state.speed ? window.Judge.html(state.speed) + '<div style="height:20px"></div>' : '') +
     offerHTML(o) +
     '<button type="button" class="btn" id="toform">この特典で無料見積もりを受け取る</button>' +
     (canMeasure ? '<button type="button" class="btn btn--sub" id="also">先に回線速度も測っておく</button>' : '') +
