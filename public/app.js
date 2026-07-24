@@ -1,548 +1,534 @@
 /* ============================================================
-   通信速度検査票 — 計測 / 聞き取り / 所見
+   ネット乗り換えの窓口 — 診断LP
    ============================================================ */
 
-const $ = (id) => document.getElementById(id);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const mbps = (bytes, ms) => (ms <= 0 ? 0 : (bytes * 8) / (ms / 1000) / 1e6);
+const stage = document.getElementById('stage');
+const state = { answers: {}, speed: null, idx: 0 };
 
-const state = {
-  meta: null,
-  down: 0,
-  up: 0,
-  ping: 0,
-  jitter: 0,
-  answers: {},
-  result: null,
-};
-
-/* ── 計測パラメータ ──────────────────────────────
-   テスト中は短めに。数字が安定しないようなら DOWN_MS を伸ばす。 */
-const CFG = {
-  DOWN_MS: 8000,
-  DOWN_STREAMS: 6,
-  DOWN_WARMUP: 1800,   // TCP の立ち上がりを除外する時間
-  DOWN_CHUNK: 25 * 1024 * 1024,
-  UP_MS: 6000,
-  UP_STREAMS: 4,
-  UP_CHUNK: 4 * 1024 * 1024,
-  PING_N: 14,
-};
-
-/* ============================================================
-   1. 接続元の確認
-   ============================================================ */
-
-async function loadMeta() {
-  try {
-    const res = await fetch('/api/meta?r=' + Math.random(), { cache: 'no-store' });
-    state.meta = await res.json();
-  } catch {
-    state.meta = { connection: 'unknown', asOrg: '', colo: '' };
-  }
-
-  const m = state.meta;
-  $('asorg').textContent = m.asOrg || '取得できませんでした';
-  $('colo').textContent = m.colo ? `${m.colo}${m.city ? ' / ' + m.city : ''}` : '—';
-  $('conntype').textContent = {
-    fixed: '固定回線（自宅Wi-Fiなど）',
-    mobile: '携帯回線',
-    unknown: '判別できませんでした',
-  }[m.connection];
-}
-
-/* ============================================================
-   2. 応答時間
-   ============================================================ */
-
-async function measurePing() {
-  const samples = [];
-  // 1回目は接続確立を含むので捨てる
-  try { await fetch('/api/meta?w=1', { cache: 'no-store' }).then((r) => r.arrayBuffer()); } catch {}
-
-  for (let i = 0; i < CFG.PING_N; i++) {
-    const t = performance.now();
-    try {
-      await fetch('/api/meta?r=' + Math.random(), { cache: 'no-store' }).then((r) => r.arrayBuffer());
-    } catch { continue; }
-    samples.push(performance.now() - t);
-  }
-  if (!samples.length) return { ping: 0, jitter: 0 };
-
-  const sorted = [...samples].sort((a, b) => a - b);
-  const ping = sorted[Math.floor(sorted.length / 2)];
-
-  let diff = 0;
-  for (let i = 1; i < samples.length; i++) diff += Math.abs(samples[i] - samples[i - 1]);
-  const jitter = samples.length > 1 ? diff / (samples.length - 1) : 0;
-
-  return { ping, jitter };
-}
-
-/* ============================================================
-   3. 下り
-   ============================================================ */
-
-async function measureDownload(onTick) {
-  const ac = new AbortController();
-  let bytes = 0;
-  let warmBytes = null;
-  let warmAt = null;
-  const t0 = performance.now();
-
-  const timer = setInterval(() => {
-    const el = performance.now() - t0;
-    if (warmBytes === null && el >= CFG.DOWN_WARMUP) {
-      warmBytes = bytes;
-      warmAt = el;
-    }
-    onTick(mbps(bytes, el), Math.min(el / CFG.DOWN_MS, 1));
-  }, 120);
-
-  const runner = async () => {
-    while (!ac.signal.aborted) {
-      try {
-        const res = await fetch(`/api/down?bytes=${CFG.DOWN_CHUNK}&r=${Math.random()}`, {
-          cache: 'no-store',
-          signal: ac.signal,
-        });
-        const reader = res.body.getReader();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          bytes += value.byteLength;
-        }
-      } catch { return; }
-    }
-  };
-
-  const all = Array.from({ length: CFG.DOWN_STREAMS }, runner);
-  await sleep(CFG.DOWN_MS);
-  ac.abort();
-  clearInterval(timer);
-  await Promise.allSettled(all);
-
-  const el = performance.now() - t0;
-  if (warmBytes !== null && el - warmAt > 1000) return mbps(bytes - warmBytes, el - warmAt);
-  return mbps(bytes, el);
-}
-
-/* ============================================================
-   4. 上り
-   ============================================================ */
-
-async function measureUpload(onTick) {
-  // crypto.getRandomValues は一度に 64KB までしか生成できないため、
-  // 64KB のブロックを作って必要な数だけ並べる
-  const block = crypto.getRandomValues(new Uint8Array(65536));
-  const count = Math.max(1, Math.round(CFG.UP_CHUNK / 65536));
-  const payload = new Blob(new Array(count).fill(block));
-
-  let bytes = 0;
-  let stop = false;
-  const live = new Set();
-  const t0 = performance.now();
-
-  const timer = setInterval(() => {
-    const el = performance.now() - t0;
-    onTick(mbps(bytes, el), Math.min(el / CFG.UP_MS, 1));
-  }, 120);
-
-  const runner = () =>
-    new Promise((resolve) => {
-      const next = () => {
-        if (stop) return resolve();
-        const xhr = new XMLHttpRequest();
-        live.add(xhr);
-        let last = 0;
-        xhr.open('POST', '/api/up?r=' + Math.random());
-        // fetch には送信側の進捗が無いので、上りだけ XHR を使う
-        xhr.upload.onprogress = (e) => {
-          bytes += e.loaded - last;
-          last = e.loaded;
-        };
-        xhr.onloadend = () => {
-          live.delete(xhr);
-          if (stop) resolve();
-          else next();
-        };
-        xhr.send(payload);
-      };
-      next();
-    });
-
-  const all = Array.from({ length: CFG.UP_STREAMS }, () => runner());
-  await sleep(CFG.UP_MS);
-
-  // 時間が来たら送信中のものを中断する。
-  // これが無いと、上りが細い回線で最後の1本が終わるまで永遠に待つことになる
-  stop = true;
-  live.forEach((x) => {
-    try { x.abort(); } catch {}
-  });
-  clearInterval(timer);
-  await Promise.allSettled(all);
-
-  return mbps(bytes, performance.now() - t0);
-}
-
-/* ============================================================
-   5. 計測の進行
-   ============================================================ */
-
-function setNum(id, v, digits = 1) {
-  $(id).textContent = v.toFixed(digits);
-}
-
-async function runMeasurement() {
-  $('remeasure').hidden = true;
-  $('stamp').classList.remove('is-pressed');
-  $('bar').style.width = '0%';
-  ['down', 'up', 'ping', 'jitter'].forEach((k) => ($(k).textContent = k === 'down' ? '0.0' : '—'));
-
-  await loadMeta();
-
-  // どれか1つが失敗しても、残りの結果で先へ進める。
-  // 計測が止まったまま画面が固まるのが一番まずいので、各段階を個別に囲う。
-
-  try {
-    $('stage').textContent = '応答時間を測定中';
-    const { ping, jitter } = await measurePing();
-    state.ping = ping;
-    state.jitter = jitter;
-    setNum('ping', ping, 0);
-    setNum('jitter', jitter, 1);
-  } catch (e) {
-    console.error('ping failed', e);
-  }
-
-  try {
-    $('stage').textContent = '下り速度を測定中';
-    state.down = await measureDownload((v, p) => {
-      setNum('down', v);
-      $('bar').style.width = (p * 55).toFixed(1) + '%';
-    });
-    setNum('down', state.down);
-  } catch (e) {
-    console.error('download failed', e);
-  }
-
-  try {
-    $('stage').textContent = '上り速度を測定中';
-    state.up = await measureUpload((v, p) => {
-      setNum('up', v);
-      $('bar').style.width = (55 + p * 45).toFixed(1) + '%';
-    });
-    setNum('up', state.up);
-  } catch (e) {
-    console.error('upload failed', e);
-    $('up').textContent = '—';
-  }
-
-  $('bar').style.width = '100%';
-  $('stage').textContent = '測定完了';
-  $('remeasure').hidden = false;
-
-  pressStamp();
-  showQuiz();
-}
-
-function pressStamp() {
-  const conn = state.meta?.connection;
-  let verdict;
-  if (conn === 'mobile') verdict = '携帯回線';
-  else if (state.down < 80 || state.ping > 50) verdict = '要改善';
-  else if (state.down < 250) verdict = '概ね良好';
-  else verdict = '良好';
-
-  $('verdict').textContent = verdict;
-  requestAnimationFrame(() => $('stamp').classList.add('is-pressed'));
-}
-
-/* ============================================================
-   6. 聞き取り
-   ============================================================ */
-
-const QUESTIONS = [
-  {
-    key: 'current',
-    no: '一',
-    label: 'いま使っている回線は？',
-    opts: [
-      ['hikari', '光回線'],
-      ['router', 'ホームルーター・WiMAX'],
-      ['catv', 'ケーブルテレビ'],
-      ['unknown', 'わからない'],
-    ],
-  },
-  {
-    key: 'construction',
-    no: '二',
-    label: '開通工事はできますか？',
-    opts: [
-      ['ok', 'できる'],
-      ['ng', 'したくない・できない'],
-    ],
-  },
-  {
-    key: 'pain',
-    no: '三',
-    label: 'いちばん困っているのは？',
-    opts: [
-      ['video', '動画が止まる'],
-      ['meeting', 'オンライン会議'],
-      ['game', 'ゲームの反応'],
-      ['price', '料金が高い'],
-    ],
-  },
-  {
-    key: 'carrier',
-    no: '四',
-    label: 'お使いのスマホは？',
-    opts: [
-      ['docomo', 'ドコモ'],
-      ['au', 'au / UQ'],
-      ['sb', 'ソフトバンク / ワイモバイル'],
-      ['other', 'その他・格安SIM'],
-    ],
-  },
-];
-
-function showQuiz() {
-  const wrap = $('quiz');
-  if (wrap.dataset.built) {
-    $('panel-quiz').hidden = false;
-    return;
-  }
-  wrap.dataset.built = '1';
-
-  QUESTIONS.forEach((q) => {
-    const div = document.createElement('div');
-    div.className = 'q';
-    div.innerHTML = `<p class="q__label"><span class="q__no">${q.no}</span>${q.label}</p>`;
-
-    const opts = document.createElement('div');
-    opts.className = 'opts';
-    q.opts.forEach(([val, text]) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'opt';
-      b.textContent = text;
-      b.onclick = () => {
-        opts.querySelectorAll('.opt').forEach((o) => o.classList.remove('is-on'));
-        b.classList.add('is-on');
-        state.answers[q.key] = val;
-        if (Object.keys(state.answers).length === QUESTIONS.length) showResult();
-      };
-      opts.appendChild(b);
-    });
-
-    div.appendChild(opts);
-    wrap.appendChild(div);
-  });
-
-  $('panel-quiz').hidden = false;
-  $('panel-quiz').scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-/* ============================================================
-   7. 所見（提案ロジック）
-   商材名は御社の取扱に合わせて差し替えてください
-   ============================================================ */
-
+/* ── 取扱商材（御社のラインナップに差し替えてください）── */
 const HIKARI = {
   docomo: 'ドコモ光',
   au: 'auひかり',
   sb: 'SoftBank 光',
+  rakuten: '楽天ひかり',
   other: 'NURO 光',
 };
-const HOMEROUTER = {
+const ROUTER = {
   docomo: 'home 5G',
   au: 'au ホームルーター 5G',
   sb: 'SoftBank Air',
+  rakuten: 'Rakuten Turbo',
   other: 'SoftBank Air',
 };
+const CARRIER_LABEL = {
+  docomo: 'ドコモ', au: 'au・UQ', sb: 'ソフトバンク・ワイモバイル',
+  rakuten: '楽天モバイル', other: 'ご利用のスマホ',
+};
+
+/* ============================================================
+   質問の定義
+   ============================================================ */
+
+const Q = {
+  have: {
+    title: '自宅にインターネット回線はありますか？',
+    hint: 'スマホのギガだけで生活している方は「いいえ」を選んでください',
+    opts: [['yes', 'はい、使っている'], ['no', 'いいえ／スマホのギガだけ']],
+  },
+
+  /* ── Aルート ── */
+  a_current: {
+    title: 'いま何をお使いですか？',
+    opts: [
+      ['hikari', '光回線'],
+      ['router', 'ホームルーター（置くだけ）'],
+      ['pocket', 'ポケットWiFi・モバイルルーター'],
+      ['catv', 'ケーブルテレビ'],
+      ['unknown', 'わからない'],
+    ],
+  },
+  a_pain: {
+    title: 'いちばんの不満はどれですか？',
+    opts: [
+      ['price', '料金が高い'],
+      ['speed', '速度が遅い・途切れる'],
+      ['support', 'サポートがつながらない'],
+      ['renew', '不満はないが乗り換えを検討中'],
+    ],
+  },
+
+  /* ── Bルート ── */
+  b_status: {
+    title: 'いまの状況に近いのはどれですか？',
+    opts: [
+      ['enough', 'スマホのギガで足りている'],
+      ['short', 'ギガが足りず困っている'],
+      ['moving', '引っ越し予定・引っ越したばかり'],
+      ['grow', '在宅勤務や家族の利用が増える'],
+    ],
+  },
+  b_priority: {
+    title: '自宅に回線を置くなら、何を重視しますか？',
+    opts: [
+      ['cheap', 'とにかく安く'],
+      ['nowork', '工事なしですぐ使いたい'],
+      ['fast', '速度と安定性'],
+      ['undecided', 'まだ決めていない'],
+    ],
+  },
+
+  /* ── 共通 ── */
+  work: {
+    title: '開通工事はできますか？',
+    hint: '光回線は原則として工事が必要です',
+    opts: [
+      ['ok', 'できる'],
+      ['avoid', 'できれば避けたい'],
+      ['ng', '工事なしがいい'],
+    ],
+  },
+  home: {
+    title: 'お住まいはどちらですか？',
+    opts: [['house', '戸建て'], ['apart', 'マンション・アパート']],
+  },
+  carrier: {
+    title: 'お使いのスマホはどちらですか？',
+    hint: 'セット割が使えるかの判定に使います',
+    opts: [
+      ['docomo', 'ドコモ'],
+      ['au', 'au・UQモバイル'],
+      ['sb', 'ソフトバンク・ワイモバイル'],
+      ['rakuten', '楽天モバイル'],
+      ['other', 'その他・格安SIM'],
+    ],
+  },
+};
+
+/* 回答内容から、たどるべき質問の並びを組み立てる */
+function sequence() {
+  const a = state.answers;
+  const s = ['have'];
+  if (a.have === 'yes') {
+    s.push('a_current', 'a_pain');
+    if (a.a_pain === 'speed') s.push('__speed');
+  } else if (a.have === 'no') {
+    s.push('b_status', 'b_priority');
+  } else {
+    return s;
+  }
+  s.push('work', 'home', 'carrier');
+  return s;
+}
+
+const countQuestions = (seq) => seq.filter((k) => k !== '__speed').length;
+
+/* ============================================================
+   画面の描画
+   ============================================================ */
+
+function paint(html) {
+  stage.innerHTML = html;
+  const card = stage.querySelector('.card');
+  if (card) card.classList.add('card--enter');
+}
+
+function progressHTML() {
+  const seq = sequence();
+  const total = countQuestions(seq);
+  const done = countQuestions(seq.slice(0, state.idx));
+  const left = Math.max(total - done, 0);
+  return `
+    <div class="prog">
+      <div class="prog__track"><div class="prog__fill" style="width:${(done / total) * 100}%"></div></div>
+      <div class="prog__meta">
+        <span>質問 <b>${Math.min(done + 1, total)}</b> / ${total}</span>
+        <span>${left <= 1 ? 'あと少しです' : `残り ${left} 問`}</span>
+      </div>
+    </div>`;
+}
+
+function render() {
+  const seq = sequence();
+  if (state.idx >= seq.length) return renderResult();
+
+  const key = seq[state.idx];
+  if (key === '__speed') return renderSpeedOffer();
+
+  const q = Q[key];
+  paint(`
+    <section class="card">
+      ${progressHTML()}
+      <h2 class="q__title">${q.title}</h2>
+      ${q.hint ? `<p class="q__hint">${q.hint}</p>` : '<div style="height:12px"></div>'}
+      <div class="choices">
+        ${q.opts.map(([v, t]) => `
+          <button type="button" class="choice${state.answers[key] === v ? ' is-on' : ''}" data-v="${v}">
+            <span class="choice__tick"></span><span>${t}</span>
+          </button>`).join('')}
+      </div>
+      ${state.idx > 0 ? '<button type="button" class="q__back">← ひとつ戻る</button>' : ''}
+    </section>`);
+
+  stage.querySelectorAll('.choice').forEach((b) => {
+    b.addEventListener('click', () => {
+      stage.querySelectorAll('.choice').forEach((o) => o.classList.remove('is-on'));
+      b.classList.add('is-on');
+      state.answers[key] = b.dataset.v;
+      setTimeout(() => { state.idx++; render(); }, 220);
+    });
+  });
+
+  const back = stage.querySelector('.q__back');
+  if (back) back.addEventListener('click', () => { state.idx--; render(); });
+}
+
+/* ============================================================
+   速度計測
+   ============================================================ */
+
+function renderSpeedOffer() {
+  paint(`
+    <section class="card">
+      ${progressHTML()}
+      <h2 class="q__title">実際の速度を測ってみませんか？</h2>
+      <p class="q__hint">
+        「遅い」の原因が回線側にあるのか、宅内のWi-Fi側にあるのかで、
+        ご案内する内容が変わります。約15秒で終わります。
+      </p>
+      <button type="button" class="btn" id="go">速度を測ってみる</button>
+      <button type="button" class="btn btn--sub" id="skip">測らずに次へ進む</button>
+      <button type="button" class="q__back">← ひとつ戻る</button>
+    </section>`);
+
+  stage.querySelector('#go').addEventListener('click', runMeasure);
+  stage.querySelector('#skip').addEventListener('click', () => { state.idx++; render(); });
+  stage.querySelector('.q__back').addEventListener('click', () => { state.idx--; render(); });
+}
+
+function meterHTML() {
+  return `
+    <section class="card">
+      <div class="prog"><div class="prog__track"><div class="prog__fill" id="mbar"></div></div></div>
+      <div class="meter">
+        <p class="meter__stage" id="mstage">準備しています</p>
+        <div class="meter__main">
+          <p class="meter__label">ダウンロード速度</p>
+          <p class="meter__value">
+            <span class="meter__num" id="mdown">0.0</span><span class="meter__unit">Mbps</span>
+          </p>
+        </div>
+        <dl class="meter__subs">
+          <div><dt>アップロード</dt><dd id="mup">—<span>Mbps</span></dd></div>
+          <div><dt>応答</dt><dd id="mping">—<span>ms</span></dd></div>
+          <div><dt>ゆらぎ</dt><dd id="mjit">—<span>ms</span></dd></div>
+        </dl>
+        <p class="meter__wire" id="mwire"></p>
+      </div>
+      <div id="mdone" hidden>
+        <button type="button" class="btn" id="mnext">結果をもとに診断を続ける</button>
+      </div>
+    </section>`;
+}
+
+async function runMeasure(after) {
+  paint(meterHTML());
+  const $ = (id) => document.getElementById(id);
+
+  const res = await window.Measure.run({
+    onStage: (s) => ($('mstage').textContent = s),
+    onProgress: (p) => ($('mbar').style.width = (p * 100).toFixed(1) + '%'),
+    onDown: (v) => ($('mdown').textContent = v.toFixed(1)),
+    onUp: (v) => ($('mup').innerHTML = v.toFixed(1) + '<span>Mbps</span>'),
+    onPing: (p, j) => {
+      $('mping').innerHTML = p.toFixed(0) + '<span>ms</span>';
+      $('mjit').innerHTML = j.toFixed(1) + '<span>ms</span>';
+    },
+    onMeta: (m) => {
+      const label = { fixed: '固定回線（自宅のWi-Fiなど）', mobile: '携帯回線', unknown: '判別できませんでした' }[m.connection];
+      $('mwire').textContent = `接続元：${m.asOrg || '不明'}　／　${label}`;
+    },
+  });
+
+  state.speed = res;
+  $('mdone').hidden = false;
+  $('mnext').addEventListener('click', () => {
+    if (typeof after === 'function') return after();
+    state.idx++;
+    render();
+  });
+}
+
+/* ============================================================
+   診断ロジック
+   ============================================================ */
 
 function diagnose() {
   const a = state.answers;
-  const conn = state.meta?.connection ?? 'unknown';
-  const carrier = a.carrier ?? 'other';
-  const d = state.down;
-  const cards = [];
-  let finding;
+  const s = state.speed;
+  const carrier = a.carrier || 'other';
+  const hikari = HIKARI[carrier];
+  const router = ROUTER[carrier];
+  const setwari = carrier === 'other'
+    ? ''
+    : `${CARRIER_LABEL[carrier]}とのセット割の対象です。`;
+  const place = a.home === 'house' ? '戸建て' : 'マンション・アパート';
 
-  /* ── 携帯回線から計測している場合 ───────────── */
-  if (conn === 'mobile') {
-    finding =
-      `携帯回線での計測のため、この数値はご自宅のWi-Fiの実力ではありません。` +
-      `ただし ${d.toFixed(0)}Mbps という数字は、この場所の電波が十分に強いことを示しています。` +
-      `工事のいらない据置型で、固定回線を置き換えられる可能性があります。`;
-    cards.push({
-      name: HOMEROUTER[carrier],
-      why: `コンセントに挿すだけで開通します。この電波環境なら実用速度が期待できます。${
-        carrier === 'other' ? '' : 'スマホとのセット割も適用対象です。'
-      }`,
-    });
-    if (a.construction === 'ok') {
-      cards.push({
-        name: HIKARI[carrier],
-        why: '工事が可能とのことなので、速度と安定性を最優先するならこちらです。',
-      });
+  const measured = !!s;
+  const down = s ? s.down : 0;
+  const mobile = s && s.meta && s.meta.connection === 'mobile';
+  const slow = measured && down < 80;
+  const laggy = measured && (s.ping > 50 || s.jitter > 20);
+
+  const R = (name, why, top) => ({ name, why, top: !!top });
+
+  /* ── Bルート ── */
+  if (a.have === 'no') {
+    if (a.b_status === 'enough') {
+      return {
+        tone: 'ok',
+        verdict: 'いまは乗り換え不要です',
+        finding:
+          'スマホのギガで足りているとのことなので、いま無理に自宅回線を契約する必要はありません。' +
+          '固定回線が必要になるのは、動画を長時間見る、在宅勤務が増える、家族の台数が増えるといったタイミングです。' +
+          'その時が来たら、あらためてご相談ください。',
+        recos: [
+          R('いまは契約しないという選択', '毎月の固定費が増えないことが、いちばんのメリットです。必要になってからで間に合います。'),
+          R('スマホの料金プランの見直し', 'ギガが余っているなら、プランを下げるだけで月額を減らせる場合があります。', true),
+        ],
+        cta: '資料だけ受け取る',
+        soft: true,
+      };
     }
-    cards.push({
-      name: 'ご自宅のWi-Fiで再検査',
-      why: '帰宅後にこのページをもう一度開いて計測すると、現在の回線との正確な比較ができます。',
-    });
-    return { finding, cards };
+
+    const nowork = a.work === 'ng' || a.b_priority === 'nowork';
+    if (nowork) {
+      return {
+        tone: 'warn',
+        verdict: '工事不要タイプがおすすめです',
+        finding:
+          `工事なしをご希望とのことなので、コンセントに挿すだけで使える据置型が最有力です。` +
+          `${place}にお住まいで、申し込みから最短で数日、届いたその日から使えます。`,
+        recos: [
+          R(router, `工事も立ち会いも不要です。${setwari}`, true),
+          R('モバイルルーターとの併用', '外出先でも使いたい場合は、持ち運べるタイプを組み合わせる方法もあります。'),
+        ],
+        cta: '無料で見積もりを受け取る',
+      };
+    }
+
+    return {
+      tone: 'warn',
+      verdict: '光回線が本命です',
+      finding:
+        `工事が可能で、${a.b_priority === 'fast' ? '速度と安定性を重視される' : 'これから環境を整えられる'}とのことなので、` +
+        `${place}向けの光回線をおすすめします。` +
+        (a.b_status === 'moving' ? '引っ越しのタイミングは工事枠が取りやすく、キャンペーンも重なりやすい時期です。' : ''),
+      recos: [
+        R(hikari, `速度・安定性ともに据置型を上回ります。${setwari}`, true),
+        R(router, '工事の日程がすぐ取れない場合の、つなぎとしても使えます。'),
+      ],
+      cta: '無料で見積もりを受け取る',
+    };
   }
 
-  /* ── 固定回線から計測している場合 ───────────── */
+  /* ── Aルート ── */
 
-  const slow = d < 80;
-  const laggy = state.ping > 50 || state.jitter > 20;
-
-  if (a.current === 'hikari' && (slow || laggy)) {
-    finding =
-      `光回線をお使いにもかかわらず、下り ${d.toFixed(0)}Mbps・応答 ${state.ping.toFixed(0)}ms という結果です。` +
-      `これは回線そのものより、IPv6（IPoE）方式が有効になっていない場合に多く見られる数値です。` +
-      `夜間に混雑する旧方式のままである可能性があります。`;
-    cards.push({
-      name: `${HIKARI[carrier]}（IPv6対応プラン）`,
-      why: '接続方式を切り替えるだけで改善する例が多く、事業者変更なら工事不要で済むこともあります。',
-    });
-    cards.push({
-      name: 'IPv6対応ルーターへの交換',
-      why: 'ご契約が既にIPv6対応の場合、ルーター側が古いと速度が出ません。まずここを確認します。',
-    });
-  } else if (a.current === 'router' || a.current === 'catv') {
-    if (a.construction === 'ng') {
-      finding =
-        `工事なしをご希望とのことなので、光回線は候補から外します。` +
-        `現状の下り ${d.toFixed(0)}Mbps に対して、最新のホームルーターなら改善の余地があります。`;
-      cards.push({
-        name: HOMEROUTER[carrier],
-        why: '5G対応の据置型です。工事不要で、届いた日から使えます。',
-      });
-      cards.push({
-        name: 'Wi-Fi中継機の追加',
-        why: '回線を変えずに、部屋の奥まで電波を届かせる方法です。費用は最小で済みます。',
-      });
-    } else {
-      finding =
-        `${a.current === 'catv' ? 'ケーブルテレビ回線' : 'ホームルーター'}をお使いですね。` +
-        `下り ${d.toFixed(0)}Mbps・上り ${state.up.toFixed(0)}Mbps という結果で、` +
-        `${a.pain === 'game' || a.pain === 'meeting' ? '特に応答速度の面で' : ''}` +
-        `光回線に切り替える価値が見込めます。`;
-      cards.push({
-        name: HIKARI[carrier],
-        why: `速度・応答ともに現状を上回ります。${
-          carrier === 'other' ? '' : 'お使いのスマホとのセット割が使えます。'
-        }`,
-      });
-      cards.push({
-        name: HOMEROUTER[carrier],
-        why: '工事の日程が取りにくい場合の次善策です。開通までのつなぎとしても使えます。',
-      });
+  // 光をお使いで、速度に不満
+  if (a.a_current === 'hikari' && a.a_pain === 'speed') {
+    if (measured && !mobile && !slow && !laggy) {
+      return {
+        tone: 'ok',
+        verdict: '回線そのものは問題ありません',
+        finding:
+          `実測で下り ${down.toFixed(0)}Mbps、応答 ${s.ping.toFixed(0)}ms が出ています。` +
+          '光回線としては十分な数値なので、体感が悪い原因は回線ではなく、宅内のWi-Fi環境にある可能性が高いです。' +
+          'ルーターの世代が古い、設置場所が悪い、といったケースがほとんどです。',
+        recos: [
+          R('Wi-Fiルーターの見直し', '回線が速くてもルーターが古いと頭打ちになります。費用も期間も最小で済む改善策です。', true),
+          R(`${hikari}へのプラン見直し`, `速度は保ったまま月額を下げられる場合があります。${setwari}`),
+        ],
+        cta: '無料で相談してみる',
+      };
     }
-  } else {
-    finding =
-      `下り ${d.toFixed(0)}Mbps・応答 ${state.ping.toFixed(0)}ms。` +
-      `回線そのものは十分な速度が出ています。体感が悪いとすれば、` +
-      `原因は回線ではなくWi-Fi機器か宅内の環境にある可能性が高いです。`;
-    cards.push({
-      name: 'Wi-Fiルーターの見直し',
-      why: '回線が速くてもルーターが古いと頭打ちになります。まずここを確認するのが近道です。',
-    });
-    cards.push({
-      name: `${HIKARI[carrier]}へのプラン見直し`,
-      why:
-        a.pain === 'price'
-          ? 'スマホとのセット割を適用すると、同等の速度のまま月額を下げられる場合があります。'
-          : '同等の速度のまま月額を見直せる場合があります。',
-    });
+    return {
+      tone: 'warn',
+      verdict: '接続方式が古い可能性があります',
+      finding:
+        (measured ? `実測で下り ${down.toFixed(0)}Mbps、応答 ${s.ping.toFixed(0)}ms でした。` : '') +
+        '光回線をお使いで速度に不満がある場合、回線そのものより、IPv6（IPoE）という新しい接続方式が有効になっていないケースが多くあります。' +
+        '古い方式のままだと、夜間など混み合う時間帯に大きく落ち込みます。',
+      recos: [
+        R(`${hikari}（IPv6対応プラン）`, `接続方式を切り替えるだけで改善する例が多く、事業者変更なら工事不要で済むこともあります。${setwari}`, true),
+        R('IPv6対応ルーターへの交換', 'すでにIPv6対応のご契約なら、ルーター側が原因です。まずここを確認します。'),
+      ],
+      cta: '無料で診断してもらう',
+    };
   }
 
-  return { finding, cards };
+  // 光をお使いで、料金に不満
+  if (a.a_current === 'hikari' && a.a_pain === 'price') {
+    return {
+      tone: 'warn',
+      verdict: 'セット割が使えていない可能性',
+      finding:
+        `お使いのスマホは${CARRIER_LABEL[carrier]}とのことですが、光回線が別の事業者のままだと、` +
+        'スマホ側の割引が適用されていない場合があります。速度も品質も落とさずに月額だけ下げられる余地があります。',
+      recos: [
+        R(hikari, `${setwari || '事業者をまとめることで、窓口も請求も一本化できます。'}品質は現状と同等以上です。`, true),
+        R('乗り換え時の還元を活用', '事業者変更のタイミングでキャッシュバックが受けられる場合があります。'),
+      ],
+      cta: '無料で料金を試算してもらう',
+    };
+  }
+
+  // 光をお使いで、サポート不満 / 更新月狙い
+  if (a.a_current === 'hikari') {
+    return {
+      tone: 'warn',
+      verdict: '乗り換えを検討する価値があります',
+      finding:
+        a.a_pain === 'support'
+          ? 'サポートの品質は事業者によって大きく差が出る部分です。回線の品質を落とさずに、窓口だけ変えることができます。'
+          : '更新月やキャンペーン時期に合わせた乗り換えは、還元がもっとも大きくなるタイミングです。いまのご契約内容を確認したうえで、最適な時期をご案内します。',
+      recos: [
+        R(hikari, `${setwari}窓口が一本化され、問い合わせ先に迷わなくなります。`, true),
+        R('現在のご契約の確認', '違約金や工事費の残債がある場合、負担してもらえる乗り換え先もあります。'),
+      ],
+      cta: '無料で相談してみる',
+    };
+  }
+
+  // ホームルーター / ポケットWiFi / ケーブルテレビ / 不明
+  const typeName = {
+    router: 'ホームルーター', pocket: 'ポケットWiFi', catv: 'ケーブルテレビ', unknown: '現在の回線',
+  }[a.a_current] || '現在の回線';
+
+  if (a.work === 'ng') {
+    return {
+      tone: 'warn',
+      verdict: '工事なしのまま改善できます',
+      finding:
+        `${typeName}をお使いで、工事は避けたいとのことですね。光回線は候補から外し、` +
+        `工事のいらない範囲で改善する方法をご案内します。` +
+        (measured ? `実測は下り ${down.toFixed(0)}Mbps でした。` : ''),
+      recos: [
+        R(router, `5G対応の最新モデルです。${setwari}コンセントに挿すだけで使えます。`, true),
+        R('Wi-Fi中継機の追加', '回線を変えずに、電波の届きにくい部屋を改善する方法です。費用は最小で済みます。'),
+      ],
+      cta: '無料で見積もりを受け取る',
+    };
+  }
+
+  return {
+    tone: 'warn',
+    verdict: '光回線への切り替えが有効です',
+    finding:
+      `${typeName}から光回線に変えると、速度・安定性・同時接続の余裕がいずれも改善します。` +
+      (a.a_current === 'catv'
+        ? 'ケーブルテレビはアップロードが細い構造のため、オンライン会議や動画投稿では特に差が出ます。'
+        : '') +
+      (a.a_pain === 'price' ? '月額も、セット割の適用で下がる場合があります。' : '') +
+      (measured ? `実測は下り ${down.toFixed(0)}Mbps でした。` : ''),
+    recos: [
+      R(hikari, `${place}向けのプランがあります。${setwari}`, true),
+      R(router, '工事の日程が取りにくい場合の次善策です。開通までのつなぎにもなります。'),
+    ],
+    cta: '無料で見積もりを受け取る',
+  };
 }
 
-function showResult() {
-  state.result = diagnose();
-  $('finding').textContent = state.result.finding;
+/* ============================================================
+   結果とフォーム
+   ============================================================ */
 
-  const ul = $('cards');
-  ul.innerHTML = '';
-  state.result.cards.forEach((c, i) => {
-    const li = document.createElement('li');
-    li.className = 'card';
-    li.innerHTML =
-      `<p class="card__rank">候補 ${String(i + 1).padStart(2, '0')}</p>` +
-      `<h3 class="card__name"></h3><p class="card__why"></p>`;
-    li.querySelector('.card__name').textContent = c.name;
-    li.querySelector('.card__why').textContent = c.why;
-    ul.appendChild(li);
+function renderResult() {
+  const d = diagnose();
+  const canMeasure = !state.speed;
+
+  paint(`
+    <section class="card">
+      <span class="verdict verdict--${d.tone}">${d.verdict}</span>
+      <p class="finding">${d.finding}</p>
+      <ul class="recos">
+        ${d.recos.map((r) => `
+          <li class="reco${r.top ? ' reco--top' : ''}">
+            ${r.top ? '<span class="reco__tag">いちばんのおすすめ</span>' : ''}
+            <h3 class="reco__name">${r.name}</h3>
+            <p class="reco__why">${r.why}</p>
+          </li>`).join('')}
+      </ul>
+      <button type="button" class="btn" id="toform">${d.cta}</button>
+      ${canMeasure ? '<button type="button" class="btn btn--sub" id="alsomeasure">ついでに回線速度も測ってみる</button>' : ''}
+      <button type="button" class="q__back">← 回答をやり直す</button>
+    </section>`);
+
+  document.getElementById('toform').addEventListener('click', () => renderForm(d));
+  stage.querySelector('.q__back').addEventListener('click', () => { state.idx--; render(); });
+
+  const also = document.getElementById('alsomeasure');
+  if (also) also.addEventListener('click', () => runMeasure(renderResult));
+}
+
+function renderForm(d) {
+  paint(`
+    <section class="card">
+      <h2 class="form__head">${d.soft ? '将来のために、資料をお送りします' : '具体的な料金と手順を、無料でお送りします'}</h2>
+      <p class="form__lead">
+        ${d.soft
+          ? 'いま契約する必要はありません。必要になったときのために、比較資料だけお渡しします。'
+          : 'ご回答内容をもとに、月額がいくら変わるか、工事の要否と期間まで含めて担当者がまとめてご連絡します。'}
+      </p>
+      <label class="field"><span>お名前</span>
+        <input type="text" id="f-name" autocomplete="name" placeholder="鈴木 太郎"></label>
+      <label class="field"><span>電話番号</span>
+        <input type="tel" id="f-tel" autocomplete="tel" inputmode="tel" placeholder="09012345678"></label>
+      <label class="field"><span>メールアドレス</span>
+        <input type="email" id="f-mail" autocomplete="email" inputmode="email" placeholder="taro@example.com"></label>
+      <button type="button" class="btn" id="send">${d.soft ? '資料を受け取る' : '無料で受け取る'}</button>
+      <p class="err" id="err" hidden></p>
+      <p class="consent">
+        ご入力いただいた内容は、ご案内の目的でのみ使用します。
+        ご希望があればいつでも削除できます。
+      </p>
+      <button type="button" class="q__back">← 結果に戻る</button>
+    </section>`);
+
+  stage.querySelector('.q__back').addEventListener('click', renderResult);
+
+  document.getElementById('send').addEventListener('click', () => {
+    const name = document.getElementById('f-name').value.trim();
+    const tel = document.getElementById('f-tel').value.trim();
+    const mail = document.getElementById('f-mail').value.trim();
+    const err = document.getElementById('err');
+
+    if (!name) return fail(err, 'お名前を入力してください。', 'f-name');
+    if (!tel && !mail) return fail(err, '電話番号かメールアドレスのどちらかを入力してください。', 'f-tel');
+
+    // 提案用の試作のため、送信も保存も行いません
+    console.log('LEAD (送信なし)', { name, tel, mail, answers: state.answers, speed: state.speed });
+    renderThanks();
   });
-
-  $('panel-result').hidden = false;
-  $('panel-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-/* ============================================================
-   8. リード送信
-   ============================================================ */
-
-async function submitLead() {
-  const name = $('f-name').value.trim();
-  const contact = $('f-contact').value.trim();
-  const err = $('f-error');
-
-  if (!contact) {
-    err.textContent = '連絡先を入力してください。メールアドレスか電話番号のどちらかで結構です。';
-    err.hidden = false;
-    $('f-contact').focus();
-    return;
-  }
-  err.hidden = true;
-
-  const btn = $('submit');
-  btn.disabled = true;
-  btn.textContent = '送信しています';
-
-  try {
-    const res = await fetch('/api/lead', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        contact,
-        answers: state.answers,
-        result: {
-          down: state.down,
-          up: state.up,
-          ping: state.ping,
-          jitter: state.jitter,
-          finding: state.result?.finding,
-          cards: state.result?.cards.map((c) => c.name),
-        },
-      }),
-    });
-    if (!res.ok) throw new Error('failed');
-    btn.textContent = '受け付けました';
-    $('f-error').hidden = true;
-  } catch {
-    btn.disabled = false;
-    btn.textContent = '試算を受け取る';
-    err.textContent = '送信できませんでした。通信環境をご確認のうえ、もう一度お試しください。';
-    err.hidden = false;
-  }
+function fail(el, msg, focusId) {
+  el.textContent = msg;
+  el.hidden = false;
+  document.getElementById(focusId).focus();
 }
 
-/* ============================================================
-   起動
-   ============================================================ */
+function renderThanks() {
+  paint(`
+    <section class="card">
+      <div class="thanks">
+        <div class="thanks__mark"></div>
+        <h2 class="thanks__title">受け付けました</h2>
+        <p class="thanks__body">
+          担当者より、1営業日以内にご連絡します。<br>
+          お急ぎの場合はお電話でも承ります。
+        </p>
+      </div>
+    </section>`);
+}
 
-$('ticket').textContent = String(Date.now() % 100000).padStart(5, '0');
-$('date').textContent = new Date().toLocaleDateString('ja-JP');
-$('remeasure').addEventListener('click', runMeasurement);
-$('submit').addEventListener('click', submitLead);
-
-runMeasurement();
+/* ── 起動 ── */
+render();
