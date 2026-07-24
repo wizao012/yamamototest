@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>通信速度検査票 ｜ ご自宅の回線を測って、次の一手を出します</title>
+<meta name="description" content="30秒で回線速度を実測し、3つの質問と合わせて、いま切り替える価値があるかを判定します。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Shippori+Mincho:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ══ 検査票 ══════════════════════════════════════════════ -->
+<main class="sheet">
+
+  <header class="sheet__head">
+    <h1 class="sheet__title">通信速度検査票</h1>
+    <dl class="sheet__meta">
+      <dt>受付</dt><dd id="ticket">—</dd>
+      <dt>検査日</dt><dd id="date">—</dd>
+    </dl>
+  </header>
+
+  <!-- ── 計測 ── -->
+  <section class="panel" id="panel-measure">
+    <p class="panel__eyebrow">第一項　実測</p>
+
+    <div class="readout">
+      <div class="readout__stage" id="stage">回線を確認しています</div>
+      <p class="readout__label">下り速度</p>
+      <p class="readout__value">
+        <span class="num" id="down">0.0</span><span class="unit">Mbps</span>
+      </p>
+      <div class="bar"><div class="bar__fill" id="bar"></div></div>
+    </div>
+
+    <dl class="grid">
+      <div><dt>上り</dt><dd><span class="num num--s" id="up">—</span><span class="unit">Mbps</span></dd></div>
+      <div><dt>応答</dt><dd><span class="num num--s" id="ping">—</span><span class="unit">ms</span></dd></div>
+      <div><dt>ゆらぎ</dt><dd><span class="num num--s" id="jitter">—</span><span class="unit">ms</span></dd></div>
+    </dl>
+
+    <dl class="wire">
+      <div><dt>接続元</dt><dd id="asorg">確認中</dd></div>
+      <div><dt>回線種別</dt><dd id="conntype">確認中</dd></div>
+      <div><dt>接続拠点</dt><dd id="colo">確認中</dd></div>
+    </dl>
+
+    <div class="stamp" id="stamp" aria-live="polite">
+      <span class="stamp__verdict" id="verdict"></span>
+    </div>
+
+    <p class="note" id="measure-note">
+      計測はご利用中の回線に対して行われます。外出先の携帯回線でも実行できますが、
+      判定の内容が変わります。
+    </p>
+
+    <button class="btn btn--ghost" id="remeasure" hidden>もう一度測る</button>
+  </section>
+
+  <!-- ── 診断 ── -->
+  <section class="panel" id="panel-quiz" hidden>
+    <p class="panel__eyebrow">第二項　聞き取り</p>
+    <div id="quiz"></div>
+  </section>
+
+  <!-- ── 判定 ── -->
+  <section class="panel" id="panel-result" hidden>
+    <p class="panel__eyebrow">第三項　所見</p>
+    <p class="finding" id="finding"></p>
+    <ul class="cards" id="cards"></ul>
+
+    <div class="lead">
+      <h2 class="lead__title">この検査票をもとに、詳しい試算をお送りします</h2>
+      <p class="lead__body">
+        現在のご契約と比べて月額がどう変わるか、工事の要否と期間まで含めて、
+        担当者が個別にまとめてご連絡します。
+      </p>
+      <label class="field">
+        <span>お名前</span>
+        <input type="text" id="f-name" autocomplete="name" placeholder="鈴木 太郎">
+      </label>
+      <label class="field">
+        <span>メールまたは電話番号</span>
+        <input type="text" id="f-contact" autocomplete="email" placeholder="taro@example.com">
+      </label>
+      <button class="btn" id="submit">試算を受け取る</button>
+      <p class="field__error" id="f-error" hidden></p>
+      <p class="consent">
+        送信すると、検査結果と回答内容が担当者に共有されます。
+      </p>
+    </div>
+  </section>
+
+  <footer class="sheet__foot">
+    <p>※ 本ページの計測値は、ご利用の機器・電波状況・時間帯によって変動します。<br>
+       ※ これはテスト用の試作です。実運用前に表示内容の法令確認が必要です。</p>
+  </footer>
+
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

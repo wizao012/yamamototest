@@ -1,0 +1,413 @@
+:root {
+  --paper:   #eef0ea;
+  --card:    #f8f9f5;
+  --ink:     #16201b;
+  --mist:    #6e7970;
+  --rule:    #c6ccc0;
+  --shu:     #c8102e;
+
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --mincho: "Shippori Mincho", serif;
+  --gothic: "Zen Kaku Gothic New", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  padding: 24px 16px 64px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--gothic);
+  font-size: 15px;
+  line-height: 1.85;
+  /* 紙の繊維感。控えめに一度だけ */
+  background-image: radial-gradient(rgba(22,32,27,.035) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--shu);
+  outline-offset: 3px;
+}
+
+/* ── 検査票の外枠 ───────────────────────────── */
+
+.sheet {
+  max-width: 620px;
+  margin: 0 auto;
+  border: 1px solid var(--ink);
+  background: var(--card);
+}
+
+.sheet__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 22px 24px 16px;
+  border-bottom: 3px double var(--ink);
+}
+
+.sheet__title {
+  margin: 0;
+  font-family: var(--mincho);
+  font-weight: 800;
+  font-size: clamp(24px, 6vw, 32px);
+  letter-spacing: .22em;
+  line-height: 1.3;
+}
+
+.sheet__meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mist);
+}
+.sheet__meta dt { letter-spacing: .1em; }
+.sheet__meta dd { margin: 0; color: var(--ink); }
+
+.sheet__foot {
+  padding: 18px 24px 22px;
+  border-top: 1px solid var(--rule);
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--mist);
+}
+.sheet__foot p { margin: 0; }
+
+/* ── 各項 ───────────────────────────────────── */
+
+.panel {
+  position: relative;
+  padding: 26px 24px 30px;
+  border-bottom: 1px solid var(--rule);
+}
+.panel:last-of-type { border-bottom: 0; }
+
+.panel__eyebrow {
+  margin: 0 0 20px;
+  font-family: var(--mincho);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: .3em;
+  color: var(--mist);
+}
+
+/* ── 実測の主表示 ───────────────────────────── */
+
+.readout__stage {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .12em;
+  color: var(--shu);
+  min-height: 1.6em;
+}
+
+.readout__label {
+  margin: 6px 0 0;
+  font-size: 12px;
+  letter-spacing: .2em;
+  color: var(--mist);
+}
+
+.readout__value {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.num {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(56px, 17vw, 92px);
+  line-height: 1;
+  letter-spacing: -.03em;
+}
+.num--s { font-size: 26px; }
+
+.unit {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--mist);
+}
+
+.bar {
+  height: 3px;
+  margin-top: 14px;
+  background: var(--rule);
+  overflow: hidden;
+}
+.bar__fill {
+  height: 100%;
+  width: 0;
+  background: var(--shu);
+  transition: width .28s linear;
+}
+
+/* ── 副次データ ─────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin: 24px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.grid dt {
+  font-size: 11px;
+  letter-spacing: .16em;
+  color: var(--mist);
+}
+.grid dd {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.wire {
+  margin: 20px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 2;
+}
+.wire > div {
+  display: flex;
+  gap: 12px;
+}
+.wire dt {
+  flex: 0 0 66px;
+  color: var(--mist);
+  letter-spacing: .1em;
+}
+.wire dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ── 判定印（この票の主役）───────────────────── */
+
+.stamp {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  width: 92px;
+  height: 92px;
+  display: grid;
+  place-items: center;
+  border: 3px solid var(--shu);
+  border-radius: 50%;
+  color: var(--shu);
+  opacity: 0;
+  transform: scale(1.7) rotate(-16deg);
+  pointer-events: none;
+}
+.stamp.is-pressed {
+  opacity: .86;
+  transform: scale(1) rotate(-9deg);
+  transition: opacity .12s ease-out, transform .34s cubic-bezier(.2,1.5,.4,1);
+}
+.stamp__verdict {
+  font-family: var(--mincho);
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: .08em;
+  text-align: center;
+  line-height: 1.35;
+  writing-mode: vertical-rl;
+  max-height: 74px;
+}
+
+/* ── 聞き取り ───────────────────────────────── */
+
+.q { margin: 0 0 26px; }
+.q:last-child { margin-bottom: 0; }
+
+.q__label {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 12px;
+  font-family: var(--mincho);
+  font-weight: 600;
+  font-size: 16px;
+}
+.q__no { color: var(--shu); }
+
+.opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.opt {
+  padding: 9px 15px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--gothic);
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.opt:hover { border-color: var(--ink); }
+.opt.is-on {
+  border-color: var(--shu);
+  background: var(--shu);
+  color: var(--card);
+}
+
+/* ── 所見 ───────────────────────────────────── */
+
+.finding {
+  margin: 0 0 22px;
+  font-family: var(--mincho);
+  font-weight: 600;
+  font-size: 17px;
+  line-height: 1.95;
+}
+
+.cards {
+  list-style: none;
+  margin: 0 0 32px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  padding: 16px 18px;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--shu);
+}
+.card__rank {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: var(--mist);
+}
+.card__name {
+  margin: 2px 0 6px;
+  font-family: var(--mincho);
+  font-weight: 800;
+  font-size: 17px;
+}
+.card__why {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.85;
+  color: #40483f;
+}
+
+/* ── リード獲得 ─────────────────────────────── */
+
+.lead {
+  padding: 22px 20px 24px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+}
+.lead__title {
+  margin: 0 0 8px;
+  font-family: var(--mincho);
+  font-weight: 800;
+  font-size: 16px;
+  line-height: 1.7;
+}
+.lead__body {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: #40483f;
+}
+
+.field { display: block; margin-bottom: 14px; }
+.field > span {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 11px;
+  letter-spacing: .16em;
+  color: var(--mist);
+}
+.field input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--gothic);
+  font-size: 16px; /* iOS のズーム防止に 16px 以上 */
+}
+.field input:focus { border-color: var(--ink); }
+
+.field__error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--shu);
+}
+
+.consent {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--mist);
+}
+
+/* ── ボタン ─────────────────────────────────── */
+
+.btn {
+  width: 100%;
+  padding: 14px;
+  border: 0;
+  background: var(--shu);
+  color: #fff;
+  font-family: var(--gothic);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: .08em;
+  cursor: pointer;
+}
+.btn:hover { background: #a90d26; }
+.btn:disabled { background: var(--mist); cursor: default; }
+
+.btn--ghost {
+  margin-top: 22px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  color: var(--mist);
+  font-weight: 500;
+  font-size: 13px;
+}
+.btn--ghost:hover { background: transparent; border-color: var(--ink); color: var(--ink); }
+
+.note {
+  margin: 20px 0 0;
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--mist);
+}
+
+/* ── 小さい画面 ─────────────────────────────── */
+
+@media (max-width: 420px) {
+  .stamp { width: 74px; height: 74px; top: 14px; right: 14px; }
+  .stamp__verdict { font-size: 13px; max-height: 58px; }
+  .panel { padding: 24px 18px 26px; }
+  .sheet__head { padding: 18px 18px 14px; }
+  .wire dt { flex-basis: 58px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: .01ms !important; }
+  .stamp { transform: scale(1) rotate(-9deg); }
+}

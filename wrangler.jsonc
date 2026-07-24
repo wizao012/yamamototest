@@ -1,0 +1,25 @@
+{
+  // Worker の名前。ここがそのまま <name>.<subdomain>.workers.dev になります
+  "name": "kaisen-check",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-07-01",
+
+  // 静的LP（public/ 以下）を同じ Worker から配信する設定
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+
+  // --- リード保存に D1 を使う場合は、下のコメントを外して database_id を差し替え ---
+  // "d1_databases": [
+  //   {
+  //     "binding": "DB",
+  //     "database_name": "kaisen-leads",
+  //     "database_id": "ここに wrangler d1 create の出力を貼る"
+  //   }
+  // ]
+}
