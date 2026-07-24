@@ -98,11 +98,11 @@ function renderIntro() {
       <button type="button" class="btn btn--sub" id="skip">測らずに進む</button>
     </section>`);
 
-  document.getElementById('go').addEventListener('click', runMeasure);
+  document.getElementById('go').addEventListener('click', function () { runMeasure(); });
   document.getElementById('skip').addEventListener('click', renderCurrent);
 }
 
-async function runMeasure() {
+async function runMeasure(after) {
   paint(`
     <section class="card">
       <div class="prog"><div class="prog__track"><div class="prog__fill" id="mbar"></div></div></div>
@@ -121,6 +121,7 @@ async function runMeasure() {
         </dl>
         <p class="meter__wire" id="mwire"></p>
       </div>
+      <div id="mjudge"></div>
       <div id="mdone" hidden>
         <button type="button" class="btn" id="mnext">この結果をもとに改善策を見る</button>
       </div>
@@ -143,8 +144,12 @@ async function runMeasure() {
     },
   });
 
+  $('mjudge').innerHTML = window.Judge.html(state.speed);
   $('mdone').hidden = false;
-  $('mnext').addEventListener('click', renderCurrent);
+  $('mnext').addEventListener('click', function () {
+    if (typeof after === 'function') return after();
+    renderCurrent();
+  });
 }
 
 /* ============================================================
@@ -327,6 +332,7 @@ function renderResult() {
             <p class="reco__why">${r.why}</p>
           </li>`).join('')}
       </ul>
+      ${state.speed ? window.Judge.html(state.speed) + '<div style="height:20px"></div>' : ''}
       ${offerHTML(offerKey())}
       <button type="button" class="btn" id="toform">この特典で無料見積もりを受け取る</button>
       ${!state.speed ? '<button type="button" class="btn btn--sub" id="also">やっぱり速度を測ってみる</button>' : ''}
@@ -341,7 +347,7 @@ function renderResult() {
   document.getElementById('toform').addEventListener('click', renderForm);
   stage.querySelector('.q__back').addEventListener('click', renderPrefs);
   const also = document.getElementById('also');
-  if (also) also.addEventListener('click', runMeasure);
+  if (also) also.addEventListener('click', function () { runMeasure(renderResult); });
 }
 
 /* ============================================================
