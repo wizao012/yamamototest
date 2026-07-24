@@ -1,6 +1,6 @@
 {
   // Worker の名前。ここがそのまま <name>.<subdomain>.workers.dev になります
-  "name": "kaisen-check",
+  "name": "yamamototest",
   "main": "worker/index.ts",
   "compatibility_date": "2026-07-01",
 
