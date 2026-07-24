@@ -28,6 +28,49 @@ const LABEL = {
   catv: 'ケーブルテレビ', unknown: '現在の回線',
 };
 
+/* ── 特典 ★金額・条件は仮です。実際のものに差し替えてください ── */
+const OFFERS = {
+  hikari: {
+    head: 'ご回答いただいた方限定<br>光回線へ乗り換える方へ',
+    label: '最大特典総額',
+    amount: '75,000',
+    note: '※ 違約金の補填は上限60,000円です。証明書のご提出が必要です',
+    perks: [
+      '<b>他社の違約金・撤去費用を全額補填</b>　最大60,000円まで負担します',
+      '<b>乗り換え限定の上乗せ還元 15,000円</b>　通常特典に追加されます',
+      '<b>開通工事費が実質無料</b>　乗り換え時の初期費用をなくします',
+      '<b>切り替えは1日で完了</b>　ネットが使えない期間はありません',
+    ],
+  },
+  router: {
+    head: 'ご回答いただいた方限定<br>工事不要タイプをご希望の方へ',
+    label: '最大特典総額',
+    amount: '60,000',
+    note: '※ 違約金の補填は上限40,000円です。証明書のご提出が必要です',
+    perks: [
+      '<b>他社の違約金を全額補填</b>　最大40,000円まで負担します',
+      '<b>端末代金が実質0円</b>　初期費用ゼロで始められます',
+      '<b>工事も立ち会いも不要</b>　コンセントに挿すだけで使えます',
+      '<b>最短で翌日に発送</b>　届いたその日から使えます',
+    ],
+  },
+};
+
+function offerHTML(key, noteOverride) {
+  const o = OFFERS[key];
+  return '<div class="offer"><div class="offer__head">' + o.head + '</div>' +
+    '<div class="offer__body"><p class="offer__label">' + o.label + '</p>' +
+    '<p class="offer__price"><span class="offer__num">' + o.amount + '</span><span class="offer__yen">円</span></p>' +
+    '<p class="offer__note">' + (noteOverride || o.note) + '</p>' +
+    '<ul class="perks">' + o.perks.map(function (p) { return '<li>' + p + '</li>'; }).join('') + '</ul>' +
+    '</div></div>';
+}
+
+/* 工事を避けたい人にはホームルーター側の特典を出す */
+function offerKey() {
+  return state.prefs.includes('nowork') ? 'router' : 'hikari';
+}
+
 function paint(html) {
   stage.innerHTML = html;
   const card = stage.querySelector('.card');
@@ -284,8 +327,14 @@ function renderResult() {
             <p class="reco__why">${r.why}</p>
           </li>`).join('')}
       </ul>
-      <button type="button" class="btn" id="toform">無料で見積もりを受け取る</button>
+      ${offerHTML(offerKey())}
+      <button type="button" class="btn" id="toform">この特典で無料見積もりを受け取る</button>
       ${!state.speed ? '<button type="button" class="btn btn--sub" id="also">やっぱり速度を測ってみる</button>' : ''}
+      <ul class="assure">
+        <li>ご相談も見積もりも無料です。その場でご契約いただく必要はありません。</li>
+        <li>ご提供エリアと建物の設備状況を確認したうえで、正確な金額をお伝えします。</li>
+        <li>ご連絡は1回のみです。お断りいただいた後に、こちらから再度ご連絡することはありません。</li>
+      </ul>
       <button type="button" class="q__back">← 条件を選び直す</button>
     </section>`);
 
@@ -302,19 +351,16 @@ function renderResult() {
 function renderForm() {
   paint(`
     <section class="card">
-      <h2 class="form__head">改善までの手順と費用を、無料でお送りします</h2>
-      <p class="form__lead">
-        ご回答内容をもとに、どれくらい速くなるのか、費用と期間はどうなるのかを、
-        担当者がまとめてご連絡します。
-      </p>
+      ${offerHTML(offerKey(), 'ご入力いただくと、適用できる正確な金額を無料で試算します')}
       <label class="field"><span>お名前</span>
         <input type="text" id="f-name" autocomplete="name" placeholder="鈴木 太郎"></label>
       <label class="field"><span>電話番号</span>
         <input type="tel" id="f-tel" autocomplete="tel" inputmode="tel" placeholder="09012345678"></label>
-      <label class="field"><span>メールアドレス</span>
+      <label class="field"><span>メールアドレス（任意）</span>
         <input type="email" id="f-mail" autocomplete="email" inputmode="email" placeholder="taro@example.com"></label>
-      <button type="button" class="btn" id="send">無料で受け取る</button>
+      <button type="button" class="btn" id="send">無料で試算を受け取る</button>
       <p class="err" id="err" hidden></p>
+      <p class="closing">入力は30秒。しつこい勧誘は一切ありません。</p>
       <p class="consent">
         ご入力いただいた内容は、ご案内の目的でのみ使用します。ご希望があればいつでも削除できます。
       </p>
